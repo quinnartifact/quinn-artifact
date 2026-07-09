@@ -1,6 +1,7 @@
 #!/bin/bash
-# Run final benchmark experiments across datasets and recalls, 3 runs each,
-# at a fixed alpha of 0.6.
+# Example final benchmark driver across configured datasets and recalls,
+# at a fixed alpha of 0.6. N_RUNS controls how many repetitions are executed
+# locally (default 1; override with e.g. N_RUNS=3 scripts/run.sh).
 #
 # Results are saved under:
 #   benchmark_final/<dataset>/alpha_0.6/recall_<r>/run_<n>/
@@ -14,7 +15,7 @@ PYTHON=python3
 ALPHA="0.6"
 DATASETS=(sift100m spacev100m deep100m deep300m)
 RECALLS=("<RECALL_SWEEP>")  # e.g. 70 75 80 85 90 95 96 97 98 99 99.5
-N_RUNS=3
+N_RUNS="${N_RUNS:-1}"
 OUT_BASE="$QUINN/benchmark_final"
 
 # ---------------------------------------------------------------------------
