@@ -1,0 +1,102 @@
+# QUINN Controller Configuration
+# Main settings: only these two parameters need to change; other paths update automatically
+dataset: deep100m
+target_recall: <TARGET_RECALL>
+
+# Thread allocation mode:
+#   off    — use num_threads / NumberOfThreads as written in this config
+#   static — look up best (threadS, threadD) from profiling results and override
+threading:
+  mode: dynamic  # off | static | dynamic
+
+  # Dynamic mode settings (only used when mode: dynamic)
+  dynamic:
+    total_threads: 32
+    step: 4                       # thread adjustment step size
+    min_each: 4                   # minimum threads per side
+    interval_ms: 30                # monitoring window size (ms)
+    cooldown_windows: 0           # windows to wait after each adjustment before next one
+    device: nvme0n1               # disk device for /proc/diskstats IO BW
+
+    # IO bandwidth target range (MB/s) — main control signal.
+    # BW > optimal_bw_high  → give more threads to DiskANN (reduce SPANN)
+    # BW < optimal_bw_low   → give more threads to SPANN   (reduce DiskANN)
+    # Measure your own hardware's achievable bandwidth (e.g. via
+    # scripts/monitor.py) and set these two values accordingly — this file
+    # ships without dataset-specific numbers.
+    # optimal_bw_low:  <TUNE_PER_HARDWARE>
+    # optimal_bw_high: <TUNE_PER_HARDWARE>
+
+    # Revert multiplier: if BOTH Mean IO Latency AND Mean Query Latency
+    # increase by more than this factor after an adjustment → revert and
+    # permanently freeze that direction.
+    revert_multiplier: 1.2
+
+    # BW growth check: after +SPANN adjustment (bw_low trigger), BW must grow
+    # by at least this factor in the next window, or revert and freeze that direction.
+    bw_growth_multiplier: 1.1
+
+    # Threads to give DiskANN when SPANN finishes all queries.
+    post_spann_diskann_threads: 32
+
+    timeseries_log: <PATH>  # output CSV log of thread-count adjustments over time
+
+# Model settings
+model:
+  model_dir: <PATH>  # directory containing the trained GBDT budget-predictor model
+  model_type: gbdt  # auto, gbdt, mlp
+  device: cpu  # cpu, cuda
+
+# Data files
+data:
+  query_file: <PATH>  # query vectors
+  centroid_file: <PATH>  # SPTAG head/centroid vectors, used to compute routing features
+  gt_file: <PATH>  # ground-truth nearest-neighbor file
+  max_queries: null  # null = all queries, or specify a number for testing
+
+# Search parameters (overridden by the top-level target_recall)
+search:
+  target_recall: null  # Uses the top-level setting
+
+# DiskANN configuration
+diskann:
+  diskann_bin: <PATH>  # built DiskANN search_disk_index binary
+  min_b_D: 0
+  args:
+    data_type: float
+    dist_fn: l2
+    index_path_prefix: <PATH>  # prefix for the built DiskANN on-disk index files
+    result_path: <PATH>  # directory where DiskANN writes its raw result files
+    query_file: <PATH>  # query vectors
+    recall_at: 100
+    search_list: [100]  # Fallback L value
+    num_threads: <TUNE_PER_HARDWARE>  # DiskANN thread count; see scripts/calibration.sh
+    num_nodes_to_cache: 10000
+    gt_file: <PATH>  # ground-truth file (optional)
+    beamwidth: 2
+
+# SPANN configuration
+spann:
+  spann_bin: <PATH>  # built SPTAG ssdserving binary
+  config_file: configs/deep100m/deep100m_searchconfig.ini
+  extra_args: []
+
+# Output settings
+output:
+  output_dir: <PATH>  # per-run output directory
+  save_budgets: true  # Save budgets.csv
+  benchmark_dir: <PATH>  # benchmark artifacts directory for this run
+
+# Result files for merging
+results:
+  diskann_result: <PATH>  # DiskANN result-id binary, for merging
+  spann_result: <PATH>  # SPANN result binary, for merging
+  k_values: [10, 20, 50, 100]  # K values to evaluate
+
+early_exit:
+  k_ref: 100             # SPANN side: which k-th distance to publish to SHM
+  topk_k: 100
+  seed_indices: ""
+  seed_k: 1
+  wait_for_spann: true
+  deprioritize_spann: true

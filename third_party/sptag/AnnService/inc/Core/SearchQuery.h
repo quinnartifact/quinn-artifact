@@ -1,0 +1,295 @@
+// Copyright (c) Microsoft Corporation. All rights reserved.
+// Licensed under the MIT License.
+
+#ifndef _SPTAG_SEARCHQUERY_H_
+#define _SPTAG_SEARCHQUERY_H_
+
+#include "SearchResult.h"
+
+#include <cstring>
+#include <unordered_set>
+#include <iostream>
+namespace SPTAG
+{
+
+// Space to save temporary answer, similar with TopKCache
+class QueryResult
+{
+public:
+    typedef BasicResult* iterator;
+    typedef const BasicResult* const_iterator;
+
+    QueryResult()
+        : m_target(nullptr),
+          m_resultNum(0),
+          m_withMeta(false),
+          m_quantizedTarget(nullptr),
+          m_quantizedSize(0)
+    {
+    }
+
+    // p_target is the target query you are searching for its nearest data
+
+    QueryResult(const void* p_target, int p_resultNum, bool p_withMeta)
+    {
+        Init(p_target, p_resultNum, p_withMeta);
+    }
+    
+    QueryResult(const void* p_target, int p_resultNum, bool p_withMeta, int id)
+    {
+        Init(p_target, p_resultNum, p_withMeta, id);
+    }
+    
+    QueryResult(const void* p_target, int p_resultNum, bool p_withMeta, BasicResult* p_results, int id)
+        : m_target(p_target),
+          m_resultNum(p_resultNum),
+          m_withMeta(p_withMeta),
+          m_quantizedTarget((void*)p_target),
+          m_quantizedSize(0),
+          m_queryID(id)
+    {
+        m_results.Set(p_results, p_resultNum, false);
+    }
+
+
+    QueryResult(const QueryResult& p_other)
+    {
+        if(p_other.m_queryID != 0)
+            Init(p_other.m_target, p_other.m_resultNum, p_other.m_withMeta, p_other.m_queryID);
+        else
+            Init(p_other.m_target, p_other.m_resultNum, p_other.m_withMeta);
+        m_searchBudget = p_other.m_searchBudget;  // Copy search budget
+        if (m_resultNum > 0)
+        {
+            std::copy(p_other.m_results.Data(), p_other.m_results.Data() + m_resultNum, m_results.Data());
+        }
+        if (p_other.m_target != p_other.m_quantizedTarget)
+        {
+            m_quantizedSize = p_other.m_quantizedSize;
+            m_quantizedTarget = ALIGN_ALLOC(m_quantizedSize);
+            std::copy(reinterpret_cast<std::uint8_t*>(p_other.m_quantizedTarget), reinterpret_cast<std::uint8_t*>(p_other.m_quantizedTarget) + m_quantizedSize, reinterpret_cast<std::uint8_t*>(m_quantizedTarget));
+        }
+    }
+
+
+    QueryResult& operator=(const QueryResult& p_other)
+    {
+        if (m_target != m_quantizedTarget) ALIGN_FREE(m_quantizedTarget);
+        if(p_other.m_queryID != 0)
+            Init(p_other.m_target, p_other.m_resultNum, p_other.m_withMeta, p_other.m_queryID);
+        else
+            Init(p_other.m_target, p_other.m_resultNum, p_other.m_withMeta);
+        m_searchBudget = p_other.m_searchBudget;  // Copy search budget
+        if (m_resultNum > 0)
+        {
+            std::copy(p_other.m_results.Data(), p_other.m_results.Data() + m_resultNum, m_results.Data());
+        }
+        if (p_other.m_target != p_other.m_quantizedTarget)
+        {
+            m_quantizedSize = p_other.m_quantizedSize;
+            m_quantizedTarget = ALIGN_ALLOC(m_quantizedSize);
+            std::copy(reinterpret_cast<std::uint8_t*>(p_other.m_quantizedTarget), reinterpret_cast<std::uint8_t*>(p_other.m_quantizedTarget) + m_quantizedSize, reinterpret_cast<std::uint8_t*>(m_quantizedTarget));
+        }
+        return *this;
+    }
+
+
+    ~QueryResult()
+    {
+        if (m_target != m_quantizedTarget)
+        {
+            ALIGN_FREE(m_quantizedTarget);
+        }
+    }
+
+
+    inline void Init(const void* p_target, int p_resultNum, bool p_withMeta)
+    {
+        m_target = p_target;        // Query
+        m_resultNum = p_resultNum;  // K nearest neighbour
+        m_withMeta = p_withMeta;
+        m_quantizedTarget = (void*)p_target;
+        m_quantizedSize = 0;
+
+        m_results = Array<BasicResult>::Alloc(p_resultNum);
+    }
+
+    inline void Init(const void* p_target, int p_resultNum, bool p_withMeta, int id)
+    {
+        m_target = p_target;        // Query
+        m_resultNum = p_resultNum;  // K nearest neighbour
+        m_withMeta = p_withMeta;
+        m_quantizedTarget = (void*)p_target;
+        m_quantizedSize = 0;
+        m_queryID = id;
+
+        m_results = Array<BasicResult>::Alloc(p_resultNum);
+    }
+
+
+    inline int GetResultNum() const
+    {
+        return m_resultNum;
+    }
+
+    inline void SetSearchBudget(int p_searchBudget)
+    {
+        m_searchBudget = p_searchBudget;
+    }
+
+    inline int GetSearchBudget() const
+    {
+        return m_searchBudget > 0 ? m_searchBudget : m_resultNum;
+    }
+
+    inline const void* GetTarget()
+    {
+        return m_target;
+    }
+
+
+    inline void* GetQuantizedTarget()
+    {
+        return m_quantizedTarget;
+    }
+
+
+    inline void SetTarget(const void* p_target)
+    {
+        if (m_target != m_quantizedTarget)
+        {
+            ALIGN_FREE(m_quantizedTarget);
+        }
+        m_target = p_target;
+        m_quantizedTarget = (void*)p_target;
+        m_quantizedSize = 0;
+    }
+    
+    inline int GetQueryID()
+    {
+        return m_queryID;
+    }
+
+    inline bool HasQuantizedTarget()
+    {
+        return m_target != m_quantizedTarget;
+    }
+
+
+    inline void CleanQuantizedTarget()
+    {
+        if (m_target != m_quantizedTarget) {
+            ALIGN_FREE(m_quantizedTarget);
+            m_quantizedTarget = (void*)m_target;
+        }
+    }
+
+
+    inline BasicResult* GetResult(int i) const
+    {
+        return i < m_resultNum ? m_results.Data() + i : nullptr;
+    }
+
+
+    inline void SetResult(int p_index, SizeType p_VID, float p_dist)
+    {
+        if (p_index < m_resultNum)
+        {
+            m_results[p_index].VID = p_VID;
+            m_results[p_index].Dist = p_dist;
+        }
+    }
+
+
+    inline BasicResult* GetResults() const
+    {
+        return m_results.Data();
+    }
+
+
+    inline bool WithMeta() const
+    {
+        return m_withMeta;
+    }
+
+
+    inline const ByteArray& GetMetadata(int p_index) const
+    {
+        if (p_index < m_resultNum && m_withMeta)
+        {
+            return m_results[p_index].Meta;
+        }
+
+        return ByteArray::c_empty;
+    }
+
+
+    inline void SetMetadata(int p_index, ByteArray p_metadata)
+    {
+        if (p_index < m_resultNum && m_withMeta)
+        {
+            m_results[p_index].Meta = std::move(p_metadata);
+        }
+    }
+
+
+    inline void Reset()
+    {
+        for (int i = 0; i < m_resultNum; i++)
+        {
+            m_results[i].VID = -1;
+            m_results[i].Dist = MaxDist;
+            m_results[i].Meta.Clear();
+        }
+    }
+
+
+    iterator begin()
+    {
+        return m_results.Data();
+    }
+
+
+    iterator end()
+    {
+        return m_results.Data() + m_resultNum;
+    }
+
+
+    const_iterator begin() const
+    {
+        return m_results.Data();
+    }
+
+
+    const_iterator end() const
+    {
+        return m_results.Data() + m_resultNum;
+    }
+
+    int m_cmpCounter = 0;
+    std::unordered_set<int> m_vectorSet {0};
+protected:
+    
+    int m_queryID =0;
+    
+    const void* m_target;
+
+    void* m_quantizedTarget;
+
+    SizeType m_quantizedSize;
+
+    int m_resultNum;
+
+    bool m_withMeta;
+
+    int m_searchBudget = 0;  // Per-query search budget (0 means use m_resultNum)
+
+    Array<BasicResult> m_results;
+
+
+
+};
+} // namespace SPTAG
+
+#endif // _SPTAG_SEARCHQUERY_H_
